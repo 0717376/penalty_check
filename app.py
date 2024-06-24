@@ -3,6 +3,8 @@ import logging
 import requests
 import json
 import random
+import socks
+import socket
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -15,19 +17,24 @@ TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 if not TOKEN:
     raise ValueError("No token provided. Set the TELEGRAM_BOT_TOKEN environment variable.")
 
-# List of proxy servers (replace with actual proxies)
+# List of SOCKS4 proxy servers (replace with actual proxies)
 PROXY_LIST = [
-    {'http': 'http://34.92.250.88:11111', 'https': 'https://34.92.250.88:11111'},
-    {'http': 'http://43.132.124.11:3128', 'https': 'https://43.132.124.11:3128'},
-    {'http': 'http://proxy3:port3', 'https': 'https://proxy3:port3'},
+    ('178.134.79.250', 5678),
+    ('185.189.208.65', 4153),
+    ('85.117.56.146', 4145),
     # Add more proxies as needed
 ]
+
+def set_socks_proxy(proxy_host, proxy_port):
+    socks.set_default_proxy(socks.SOCKS4, proxy_host, proxy_port)
+    socket.socket = socks.socksocket
 
 def get_working_proxy():
     random.shuffle(PROXY_LIST)
     for proxy in PROXY_LIST:
         try:
-            response = requests.get('https://police.ge', proxies=proxy, timeout=5)
+            set_socks_proxy(proxy[0], proxy[1])
+            response = requests.get('https://police.ge', timeout=5)
             if response.status_code == 200:
                 return proxy
         except:
@@ -46,14 +53,15 @@ async def check_fines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("Sorry, couldn't find a working proxy. Please try again later.")
         return
 
+    set_socks_proxy(proxy[0], proxy[1])
+
     try:
         # First request to get the CSRF token and cookies
         session = requests.Session()
         response = session.get('https://police.ge/protocol/index.php?lang=en', 
                                headers={
                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.60 Safari/537.36'
-                               },
-                               proxies=proxy)
+                               })
         response.raise_for_status()
         
         # Extract CSRF token from the response
@@ -88,8 +96,7 @@ async def check_fines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         }
         response = session.post('https://police.ge/protocol/index.php?url=protocols/searchByAuto', 
                                 headers=headers, 
-                                data=data,
-                                proxies=proxy)
+                                data=data)
         response.raise_for_status()
         
         logger.info(f"Response status code: {response.status_code}")
