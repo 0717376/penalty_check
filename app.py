@@ -19,7 +19,7 @@ if not TOKEN:
 
 # Constants for proxy timeout
 PROXY_TIMEOUT = 5  # Increased timeout for proxy testing
-MAX_RETRIES = 3    # Increased number of retries
+MAX_RETRIES = 5    # Increased number of retries
 
 def get_proxy_list():
     url = "https://proxylist.geonode.com/api/proxy-list?country=GE&protocols=socks4&limit=500&page=1&sort_by=lastChecked&sort_type=desc"
