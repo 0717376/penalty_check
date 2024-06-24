@@ -18,7 +18,7 @@ if not TOKEN:
 # List of proxy servers (replace with actual proxies)
 PROXY_LIST = [
     {'http': 'http://34.92.250.88:11111', 'https': 'https://34.92.250.88:11111'},
-    {'http': 'http://proxy2:port2', 'https': 'https://proxy2:port2'},
+    {'http': 'http://43.132.124.11:3128', 'https': 'https://43.132.124.11:3128'},
     {'http': 'http://proxy3:port3', 'https': 'https://proxy3:port3'},
     # Add more proxies as needed
 ]
