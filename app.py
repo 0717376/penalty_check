@@ -2,6 +2,7 @@ import os
 import logging
 import requests
 import json
+import random
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -14,6 +15,25 @@ TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 if not TOKEN:
     raise ValueError("No token provided. Set the TELEGRAM_BOT_TOKEN environment variable.")
 
+# List of proxy servers (replace with actual proxies)
+PROXY_LIST = [
+    {'http': '80.241.251.54:8080', 'https': 'https://proxy1:port1'},
+    {'http': 'http://proxy2:port2', 'https': 'https://proxy2:port2'},
+    {'http': 'http://proxy3:port3', 'https': 'https://proxy3:port3'},
+    # Add more proxies as needed
+]
+
+def get_working_proxy():
+    random.shuffle(PROXY_LIST)
+    for proxy in PROXY_LIST:
+        try:
+            response = requests.get('https://police.ge', proxies=proxy, timeout=5)
+            if response.status_code == 200:
+                return proxy
+        except:
+            continue
+    return None
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text('Welcome! Please enter your vehicle registration number to check for fines.')
 
@@ -21,13 +41,19 @@ async def check_fines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     vehicle_number = update.message.text.strip().upper()
     logger.info(f"Checking fines for vehicle number: {vehicle_number}")
     
+    proxy = get_working_proxy()
+    if not proxy:
+        await update.message.reply_text("Sorry, couldn't find a working proxy. Please try again later.")
+        return
+
     try:
         # First request to get the CSRF token and cookies
         session = requests.Session()
         response = session.get('https://police.ge/protocol/index.php?lang=en', 
                                headers={
                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.60 Safari/537.36'
-                               })
+                               },
+                               proxies=proxy)
         response.raise_for_status()
         
         # Extract CSRF token from the response
@@ -62,7 +88,8 @@ async def check_fines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         }
         response = session.post('https://police.ge/protocol/index.php?url=protocols/searchByAuto', 
                                 headers=headers, 
-                                data=data)
+                                data=data,
+                                proxies=proxy)
         response.raise_for_status()
         
         logger.info(f"Response status code: {response.status_code}")
