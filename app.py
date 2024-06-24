@@ -6,7 +6,7 @@ import socks
 import socket
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from telegram.error import TimedOut
+from telegram.error import TimedOut, NetworkError
 
 # Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -18,8 +18,8 @@ if not TOKEN:
     raise ValueError("No token provided. Set the TELEGRAM_BOT_TOKEN environment variable.")
 
 # Constants for proxy timeout
-PROXY_TIMEOUT = 2  # Timeout for testing individual proxies
-MAX_RETRIES = 2    # Maximum number of retries for finding a working proxy
+PROXY_TIMEOUT = 5  # Increased timeout for proxy testing
+MAX_RETRIES = 3    # Increased number of retries
 
 def get_proxy_list():
     url = "https://proxylist.geonode.com/api/proxy-list?country=GE&protocols=socks4&limit=500&page=1&sort_by=lastChecked&sort_type=desc"
@@ -36,19 +36,22 @@ def set_socks_proxy(proxy_host, proxy_port):
     socks.set_default_proxy(socks.SOCKS4, proxy_host, int(proxy_port))
     socket.socket = socks.socksocket
 
+def test_proxy(proxy):
+    try:
+        set_socks_proxy(proxy[0], proxy[1])
+        response = requests.get('https://police.ge/protocol/index.php?lang=en', timeout=PROXY_TIMEOUT)
+        return response.status_code == 200
+    except Exception as e:
+        logger.warning(f"Proxy {proxy[0]}:{proxy[1]} failed: {str(e)}")
+        return False
+
 def get_working_proxy():
     proxy_list = get_proxy_list()
     for _ in range(MAX_RETRIES):
         for proxy in proxy_list:
-            try:
-                logger.info(f"Trying proxy: {proxy[0]}:{proxy[1]}")
-                set_socks_proxy(proxy[0], proxy[1])
-                response = requests.get('https://police.ge', timeout=PROXY_TIMEOUT)
-                if response.status_code == 200:
-                    logger.info(f"Working proxy found: {proxy[0]}:{proxy[1]}")
-                    return proxy
-            except requests.RequestException as e:
-                logger.warning(f"Proxy {proxy[0]}:{proxy[1]} failed: {str(e)}")
+            if test_proxy(proxy):
+                logger.info(f"Working proxy found: {proxy[0]}:{proxy[1]}")
+                return proxy
         logger.warning("No working proxy found, retrying from the beginning of the list...")
     logger.error("No working proxy found after all retries")
     return None
@@ -145,9 +148,9 @@ async def check_fines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     
     try:
         await update.message.reply_text(message)
-    except TimedOut:
-        logger.error("Timed out while sending message to user")
-        await update.message.reply_text("Sorry, the response timed out. Please try again later.")
+    except (TimedOut, NetworkError) as e:
+        logger.error(f"Error sending message to user: {e}")
+        await update.message.reply_text("Sorry, there was an error sending the response. Please try again later.")
 
 def main() -> None:
     application = Application.builder().token(TOKEN).build()
