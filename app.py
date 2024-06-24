@@ -2,11 +2,11 @@ import os
 import logging
 import requests
 import json
-import random
 import socks
 import socket
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.error import TimedOut
 
 # Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -17,28 +17,40 @@ TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 if not TOKEN:
     raise ValueError("No token provided. Set the TELEGRAM_BOT_TOKEN environment variable.")
 
-# List of SOCKS4 proxy servers (replace with actual proxies)
-PROXY_LIST = [
-    ('178.134.79.250', 5678),
-    ('185.189.208.65', 4153),
-    ('85.117.56.146', 4145),
-    # Add more proxies as needed
-]
+# Constants for proxy timeout
+PROXY_TIMEOUT = 2  # Timeout for testing individual proxies
+MAX_RETRIES = 2    # Maximum number of retries for finding a working proxy
+
+def get_proxy_list():
+    url = "https://proxylist.geonode.com/api/proxy-list?country=GE&protocols=socks4&limit=500&page=1&sort_by=lastChecked&sort_type=desc"
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        return [(proxy['ip'], proxy['port']) for proxy in data['data']]
+    except Exception as e:
+        logger.error(f"Failed to fetch proxy list: {e}")
+        return []
 
 def set_socks_proxy(proxy_host, proxy_port):
-    socks.set_default_proxy(socks.SOCKS4, proxy_host, proxy_port)
+    socks.set_default_proxy(socks.SOCKS4, proxy_host, int(proxy_port))
     socket.socket = socks.socksocket
 
 def get_working_proxy():
-    random.shuffle(PROXY_LIST)
-    for proxy in PROXY_LIST:
-        try:
-            set_socks_proxy(proxy[0], proxy[1])
-            response = requests.get('https://police.ge', timeout=5)
-            if response.status_code == 200:
-                return proxy
-        except:
-            continue
+    proxy_list = get_proxy_list()
+    for _ in range(MAX_RETRIES):
+        for proxy in proxy_list:
+            try:
+                logger.info(f"Trying proxy: {proxy[0]}:{proxy[1]}")
+                set_socks_proxy(proxy[0], proxy[1])
+                response = requests.get('https://police.ge', timeout=PROXY_TIMEOUT)
+                if response.status_code == 200:
+                    logger.info(f"Working proxy found: {proxy[0]}:{proxy[1]}")
+                    return proxy
+            except requests.RequestException as e:
+                logger.warning(f"Proxy {proxy[0]}:{proxy[1]} failed: {str(e)}")
+        logger.warning("No working proxy found, retrying from the beginning of the list...")
+    logger.error("No working proxy found after all retries")
     return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -61,7 +73,8 @@ async def check_fines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         response = session.get('https://police.ge/protocol/index.php?lang=en', 
                                headers={
                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.60 Safari/537.36'
-                               })
+                               },
+                               timeout=30)
         response.raise_for_status()
         
         # Extract CSRF token from the response
@@ -96,7 +109,8 @@ async def check_fines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         }
         response = session.post('https://police.ge/protocol/index.php?url=protocols/searchByAuto', 
                                 headers=headers, 
-                                data=data)
+                                data=data,
+                                timeout=30)
         response.raise_for_status()
         
         logger.info(f"Response status code: {response.status_code}")
@@ -129,7 +143,11 @@ async def check_fines(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logger.error(f"Unexpected error: {e}")
         message = f"An unexpected error occurred: {str(e)}"
     
-    await update.message.reply_text(message)
+    try:
+        await update.message.reply_text(message)
+    except TimedOut:
+        logger.error("Timed out while sending message to user")
+        await update.message.reply_text("Sorry, the response timed out. Please try again later.")
 
 def main() -> None:
     application = Application.builder().token(TOKEN).build()
